@@ -172,6 +172,7 @@ static int mysql_handle_preparer(pdo_dbh_t *dbh, const char *sql, size_t sql_len
     PDO_DBG_INF_FMT("dbh=%p", dbh);
     PDO_DBG_INF_FMT("sql=%.*s", (int) sql_len, sql);
 
+    // prepare针对Statement来操作, 共享: pdo_mysql_db_handle 信息
     S->H = H;
     stmt->driver_data = S;
     stmt->methods = &mysql_stmt_methods;
@@ -532,6 +533,8 @@ static int pdo_mysql_handle_factory(pdo_dbh_t *dbh, zval *driver_options) {
     char *host = NULL, *unix_socket = NULL;
     unsigned int port = 3306;
     char *dbname;
+
+    // 定义相关的参数信息
     struct pdo_data_src_parser vars[] = {
         {"charset",     NULL,                        0},
         {"dbname", "",                               0},
@@ -549,6 +552,7 @@ static int pdo_mysql_handle_factory(pdo_dbh_t *dbh, zval *driver_options) {
     size_t password_len = 0;
 #endif
 
+    // 不支持Multi-statement
 #ifdef CLIENT_MULTI_STATEMENTS
     if (!driver_options) {
         connect_opts |= CLIENT_MULTI_STATEMENTS;
@@ -563,8 +567,11 @@ static int pdo_mysql_handle_factory(pdo_dbh_t *dbh, zval *driver_options) {
     PDO_DBG_INF("multi results");
 #endif
 
+    // 解析相关的参数信息
     php_pdo_parse_data_source(dbh->data_source, dbh->data_source_len, vars, 5);
 
+    // 创建handle
+    // 持久与否?
     H = pecalloc(1, sizeof(pdo_mysql_db_handle), dbh->is_persistent);
 
     H->einfo.errcode = 0;
@@ -573,6 +580,7 @@ static int pdo_mysql_handle_factory(pdo_dbh_t *dbh, zval *driver_options) {
     /* allocate an environment */
 
     /* handle for the server */
+    // 创建底层的Connection: 是否持久
     if (!(H->server = pdo_mysql_init(dbh->is_persistent))) {
         pdo_mysql_error(dbh);
         goto cleanup;
@@ -584,6 +592,7 @@ static int pdo_mysql_handle_factory(pdo_dbh_t *dbh, zval *driver_options) {
 	H->max_buffer_size = 1024*1024;
 #endif
 
+    // 默认情况下: emulate_prepare = 1，Web情况下statement的Prepare反而效率低
     H->buffered = H->emulate_prepare = 1;
 
     /* handle MySQL options */
@@ -598,8 +607,9 @@ static int pdo_mysql_handle_factory(pdo_dbh_t *dbh, zval *driver_options) {
         zend_string *ssl_key = NULL, *ssl_cert = NULL, *ssl_ca = NULL, *ssl_capath = NULL, *ssl_cipher = NULL;
         H->buffered = pdo_attr_lval(driver_options, PDO_MYSQL_ATTR_USE_BUFFERED_QUERY, 1);
 
+        // 两个参数控制: emulate_prepare
         H->emulate_prepare = pdo_attr_lval(driver_options,
-                                           PDO_MYSQL_ATTR_DIRECT_QUERY, H->emulate_prepare);
+                                           PDO_MYSQL_ATTR_DIRECT_QUERY, H->emulate_prepare); // 默认为1
         H->emulate_prepare = pdo_attr_lval(driver_options,
                                            PDO_ATTR_EMULATE_PREPARES, H->emulate_prepare);
 
@@ -641,6 +651,7 @@ static int pdo_mysql_handle_factory(pdo_dbh_t *dbh, zval *driver_options) {
 			mysql_options(H->server, MYSQL_OPT_RECONNECT, (const char*)&reconnect);
 		}
 #endif
+        // init command：创建Connection时执行的Command, 例如：设置Charset等
         init_cmd = pdo_attr_strval(driver_options, PDO_MYSQL_ATTR_INIT_COMMAND, NULL);
         if (init_cmd) {
             if (mysql_options(H->server, MYSQL_INIT_COMMAND, (const char *) ZSTR_VAL(init_cmd))) {
@@ -678,64 +689,9 @@ static int pdo_mysql_handle_factory(pdo_dbh_t *dbh, zval *driver_options) {
                 goto cleanup;
             }
         }
-
-        ssl_key = pdo_attr_strval(driver_options, PDO_MYSQL_ATTR_SSL_KEY, NULL);
-        ssl_cert = pdo_attr_strval(driver_options, PDO_MYSQL_ATTR_SSL_CERT, NULL);
-        ssl_ca = pdo_attr_strval(driver_options, PDO_MYSQL_ATTR_SSL_CA, NULL);
-        ssl_capath = pdo_attr_strval(driver_options, PDO_MYSQL_ATTR_SSL_CAPATH, NULL);
-        ssl_cipher = pdo_attr_strval(driver_options, PDO_MYSQL_ATTR_SSL_CIPHER, NULL);
-
-        if (ssl_key || ssl_cert || ssl_ca || ssl_capath || ssl_cipher) {
-            mysql_ssl_set(H->server,
-                          ssl_key ? ZSTR_VAL(ssl_key) : NULL,
-                          ssl_cert ? ZSTR_VAL(ssl_cert) : NULL,
-                          ssl_ca ? ZSTR_VAL(ssl_ca) : NULL,
-                          ssl_capath ? ZSTR_VAL(ssl_capath) : NULL,
-                          ssl_cipher ? ZSTR_VAL(ssl_cipher) : NULL);
-            if (ssl_key) {
-                zend_string_release(ssl_key);
-            }
-            if (ssl_cert) {
-                zend_string_release(ssl_cert);
-            }
-            if (ssl_ca) {
-                zend_string_release(ssl_ca);
-            }
-            if (ssl_capath) {
-                zend_string_release(ssl_capath);
-            }
-            if (ssl_cipher) {
-                zend_string_release(ssl_cipher);
-            }
-        }
-
-#if MYSQL_VERSION_ID > 50605 || defined(PDO_USE_MYSQLND)
-        {
-            zend_string *public_key = pdo_attr_strval(driver_options, PDO_MYSQL_ATTR_SERVER_PUBLIC_KEY, NULL);
-            if (public_key) {
-                if (mysql_options(H->server, MYSQL_SERVER_PUBLIC_KEY, ZSTR_VAL(public_key))) {
-                    pdo_mysql_error(dbh);
-                    zend_string_release(public_key);
-                    goto cleanup;
-                }
-                zend_string_release(public_key);
-            }
-        }
-#endif
-
-#ifdef PDO_USE_MYSQLND
-        {
-            zend_long ssl_verify_cert = pdo_attr_lval(driver_options,
-                                                      PDO_MYSQL_ATTR_SSL_VERIFY_SERVER_CERT, -1);
-            if (ssl_verify_cert != -1) {
-                connect_opts |= ssl_verify_cert ?
-                                CLIENT_SSL_VERIFY_SERVER_CERT :
-                                CLIENT_SSL_DONT_VERIFY_SERVER_CERT;
-            }
-        }
-#endif
     }
 
+    // 设置字符集
 #ifdef PDO_MYSQL_HAS_CHARSET
     if (vars[0].optval && mysql_options(H->server, MYSQL_SET_CHARSET_NAME, vars[0].optval)) {
         pdo_mysql_error(dbh);
@@ -749,11 +705,9 @@ static int pdo_mysql_handle_factory(pdo_dbh_t *dbh, zval *driver_options) {
         port = atoi(vars[3].optval);
     }
 
-#ifdef PHP_WIN32
-	if (vars[2].optval && !strcmp(".", vars[2].optval)) {
-#else
+
+    // unix socket??
     if (vars[2].optval && !strcmp("localhost", vars[2].optval)) {
-#endif
         unix_socket = vars[4].optval;
     }
 
@@ -767,6 +721,7 @@ static int pdo_mysql_handle_factory(pdo_dbh_t *dbh, zval *driver_options) {
         password_len = strlen(dbh->password);
     }
 
+    // 连接DB
     if (mysqlnd_connect(H->server, host, dbh->username, dbh->password, password_len, dbname, dbname_len,
                         port, unix_socket, connect_opts, MYSQLND_CLIENT_NO_FLAG) == NULL) {
 #else
@@ -776,6 +731,7 @@ static int pdo_mysql_handle_factory(pdo_dbh_t *dbh, zval *driver_options) {
         goto cleanup;
     }
 
+    // 是否设置auto_commit(这个最好为1, 否则死得很惨)
     if (!dbh->auto_commit) {
         mysql_handle_autocommit(dbh);
     }
