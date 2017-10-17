@@ -470,31 +470,14 @@ static int pdo_mysql_get_attribute(pdo_dbh_t *dbh, zend_long attr, zval *return_
 /* {{{ pdo_mysql_check_liveness */
 static int pdo_mysql_check_liveness(pdo_dbh_t *dbh) {
     pdo_mysql_db_handle *H = (pdo_mysql_db_handle *) dbh->driver_data;
-#if MYSQL_VERSION_ID <= 32230
-	void (*handler) (int);
-	unsigned int my_errno;
-#endif
 
     PDO_DBG_ENTER("pdo_mysql_check_liveness");
     PDO_DBG_INF_FMT("dbh=%p", dbh);
 
-#if MYSQL_VERSION_ID > 32230
+    // 通过ping来检查server是否活着?
     if (mysql_ping(H->server)) {
         PDO_DBG_RETURN(FAILURE);
     }
-#else /* no mysql_ping() */
-	handler = signal(SIGPIPE, SIG_IGN);
-	mysql_stat(H->server);
-	switch (mysql_errno(H->server)) {
-		case CR_SERVER_GONE_ERROR:
-		case CR_SERVER_LOST:
-			signal(SIGPIPE, handler);
-			PDO_DBG_RETURN(FAILURE);
-		default:
-			break;
-	}
-	signal(SIGPIPE, handler);
-#endif /* end mysql_ping() */
     PDO_DBG_RETURN(SUCCESS);
 }
 /* }}} */
@@ -514,7 +497,7 @@ static struct pdo_dbh_methods mysql_methods = {
     pdo_mysql_get_attribute,
     pdo_mysql_check_liveness,
     NULL,
-    NULL,
+    NULL, // persistent_shutdown 没有定义
     NULL
 };
 /* }}} */

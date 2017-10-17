@@ -38,8 +38,7 @@
 
 static int pdo_dbh_attribute_set(pdo_dbh_t *dbh, zend_long attr, zval *value);
 
-void pdo_raise_impl_error(pdo_dbh_t *dbh, pdo_stmt_t *stmt, const char *sqlstate, const char *supp) /* {{{ */
-{
+void pdo_raise_impl_error(pdo_dbh_t *dbh, pdo_stmt_t *stmt, const char *sqlstate, const char *supp) {
     pdo_error_type *pdo_err = &dbh->error_code;
     char *message = NULL;
     const char *msg;
@@ -96,10 +95,9 @@ void pdo_raise_impl_error(pdo_dbh_t *dbh, pdo_stmt_t *stmt, const char *sqlstate
         efree(message);
     }
 }
-/* }}} */
 
-PDO_API void pdo_handle_error(pdo_dbh_t *dbh, pdo_stmt_t *stmt) /* {{{ */
-{
+
+PDO_API void pdo_handle_error(pdo_dbh_t *dbh, pdo_stmt_t *stmt) {
     pdo_error_type *pdo_err = &dbh->error_code;
     const char *msg = "<<Unknown>>";
     char *supp = NULL;
@@ -177,10 +175,9 @@ PDO_API void pdo_handle_error(pdo_dbh_t *dbh, pdo_stmt_t *stmt) /* {{{ */
     }
 }
 
-/* }}} */
 
-static char *dsn_from_uri(char *uri, char *buf, size_t buflen) /* {{{ */
-{
+// 解析DB的Uri
+static char *dsn_from_uri(char *uri, char *buf, size_t buflen) {
     php_stream *stream;
     char *dsn = NULL;
 
@@ -191,8 +188,9 @@ static char *dsn_from_uri(char *uri, char *buf, size_t buflen) /* {{{ */
     }
     return dsn;
 }
-/* }}} */
 
+
+// 构造PDO？ 如何处理呢?
 /* {{{ proto void PDO::__construct(string dsn[, string username[, string passwd [, array options]]])
    */
 static PHP_METHOD(PDO, dbh_constructor) {
@@ -210,12 +208,14 @@ static PHP_METHOD(PDO, dbh_constructor) {
     int call_factory = 1;
     zend_error_handling zeh;
 
+    // 1. 参数解析
     if (FAILURE == zend_parse_parameters_throw(ZEND_NUM_ARGS(),
                                                "s|s!s!a!", &data_source, &data_source_len,
                                                &username, &usernamelen, &password, &passwordlen, &options)) {
         return;
     }
 
+    // 2. 解析data source
     /* parse the data source name */
     colon = strchr(data_source, ':');
 
@@ -252,6 +252,7 @@ static PHP_METHOD(PDO, dbh_constructor) {
         }
     }
 
+    // 3. 定位驱动
     driver = pdo_find_driver(data_source, colon - data_source);
 
     if (!driver) {
@@ -261,6 +262,7 @@ static PHP_METHOD(PDO, dbh_constructor) {
         return;
     }
 
+    // 4. php对象到 pdo_dbh_t 的转换（内部数据结构)
     dbh = Z_PDO_DBH_P(object);
 
     /* is this supposed to be a persistent connection ? */
@@ -271,9 +273,11 @@ static PHP_METHOD(PDO, dbh_constructor) {
         pdo_dbh_t *pdbh = NULL;
         zval *v;
 
+        // 4.1 是否持久化连接
         if ((v = zend_hash_index_find(Z_ARRVAL_P(options), PDO_ATTR_PERSISTENT)) != NULL) {
-            if (Z_TYPE_P(v) == IS_STRING &&
-                !is_numeric_string(Z_STRVAL_P(v), Z_STRLEN_P(v), NULL, NULL, 0) && Z_STRLEN_P(v) > 0) {
+            // v可以为字符串
+            if (Z_TYPE_P(v) == IS_STRING && !is_numeric_string(Z_STRVAL_P(v), Z_STRLEN_P(v), NULL, NULL, 0) &&
+                Z_STRLEN_P(v) > 0) {
                 /* user specified key */
                 plen = spprintf(&hashkey, 0, "PDO:DBH:DSN=%s:%s:%s:%s", data_source,
                                 username ? username : "",
@@ -281,6 +285,7 @@ static PHP_METHOD(PDO, dbh_constructor) {
                                 Z_STRVAL_P(v));
                 is_persistent = 1;
             } else {
+                // v也可以bool/long，非0即可
                 is_persistent = zval_get_long(v) ? 1 : 0;
                 plen = spprintf(&hashkey, 0, "PDO:DBH:DSN=%s:%s:%s", data_source,
                                 username ? username : "",
@@ -290,15 +295,28 @@ static PHP_METHOD(PDO, dbh_constructor) {
 
         if (is_persistent) {
             /* let's see if we have one cached.... */
+            // 如何处理持久化呢?
+            // 返回的数据类型? zend_resource
+            // 返回zval中的ptr
             if ((le = zend_hash_str_find_ptr(&EG(persistent_list), hashkey, plen)) != NULL) {
+                // 资源类型一致
                 if (le->type == php_pdo_list_entry()) {
                     pdbh = (pdo_dbh_t *) le->ptr;
+                    // zend_hash_str_del()
+                    // persistent_list 中的对象该如何删除呢?
 
                     /* is the connection still alive ? */
+                    // 是否alive？
                     if (pdbh->methods->check_liveness && FAILURE == (pdbh->methods->check_liveness)(pdbh)) {
                         /* nope... need to kill it */
                         pdbh->refcount--;
-                        zend_list_close(le);
+                        // https://github.com/php/php-src/blob/bc5811f361ead53a803046b128a64d15aba2f2e5/Zend/zend_list.c
+                        // zend_list_close
+                        //  如果引用计数小于0，则从Regular中删除
+                        //     GC_REFCOUNT(&le) = 1; // 引用计数, 这部分逻辑保证了le内存不会被释放
+                        //
+                        //  否则删除Resource(修改type, 删除ptr)
+                        zend_list_close(le); // 关闭资源? 释放 pdbh
                         pdbh = NULL;
                     }
                 }
@@ -307,10 +325,11 @@ static PHP_METHOD(PDO, dbh_constructor) {
             if (pdbh) {
                 call_factory = 0;
             } else {
+                // 创建
                 /* need a brand new pdbh */
                 pdbh = pecalloc(1, sizeof(*pdbh), 1);
 
-                pdbh->refcount = 1;
+                pdbh->refcount = 1; // 默认为1, 如果引用再+1; 除非出现问题, 能否精确控制呢?
                 pdbh->is_persistent = 1;
                 pdbh->persistent_id = pemalloc(plen + 1, 1);
                 memcpy((char *) pdbh->persistent_id, hashkey, plen + 1);
@@ -320,10 +339,15 @@ static PHP_METHOD(PDO, dbh_constructor) {
         }
 
         if (pdbh) {
+            // 如果存在持久化的对象，那么释放当前的对象 dbh
+            // $mysql_connection = new PDO("xxxxx")
+            // 这句话本来就分为两个步骤: 创建Object, 调用__construct
+            // 只是在__construct阶段会放弃刚刚创建的Object
+            //
             efree(dbh);
             /* switch over to the persistent one */
             Z_PDO_OBJECT_P(object)->inner = pdbh;
-            pdbh->refcount++;
+            pdbh->refcount++; // 只要有人引用就++
             dbh = pdbh;
         }
 
@@ -332,6 +356,7 @@ static PHP_METHOD(PDO, dbh_constructor) {
         }
     }
 
+    // 上面创建了一个pdbh的空壳，需要通过具体的驱动的Factory来初始化
     if (call_factory) {
         dbh->data_source_len = strlen(colon + 1);
         dbh->data_source = (const char *) pestrdup(colon + 1, is_persistent);
@@ -353,6 +378,7 @@ static PHP_METHOD(PDO, dbh_constructor) {
         goto options;
     }
 
+    // 通过factory来构造一个有效的对象
     if (driver->db_handle_factory(dbh, options)) {
         /* all set */
 
@@ -362,11 +388,24 @@ static PHP_METHOD(PDO, dbh_constructor) {
             /* register in the persistent list etc. */
             /* we should also need to replace the object store entry,
                since it was created with emalloc */
-
+            // 如何更新 persistent_list
+            // Key: (char *) dbh->persistent_id, dbh->persistent_id_len
+            // Value: (zend_resource*)&le
+            // 只有持久化时才有这种资源需要管理?
             le.type = php_pdo_list_entry();
             le.ptr = dbh;
-            GC_REFCOUNT(&le) = 1;
+            GC_REFCOUNT(&le) = 1; // 引用计数(不是会作为le内存管理的的条件)
 
+            // 参考: https://github.com/php/php-src/blob/254b74b85f0d9467c937ccee8aab02e31729d49b/Zend/zend_hash.h
+            //
+            //            static zend_always_inline void *zend_hash_str_update_mem(HashTable *ht, const char *str, size_t len, void *pData, size_t size) {
+            //                void *p;
+            //
+            //                p = pemalloc(size, GC_FLAGS(ht) & IS_ARRAY_PERSISTENT);
+            //                memcpy(p, pData, size); // 拷贝pData, 然后将pData封装为zval
+            //                return zend_hash_str_update_ptr(ht, str, len, p);
+            //            }
+            //
             if ((zend_hash_str_update_mem(&EG(persistent_list),
                                           (char *) dbh->persistent_id, dbh->persistent_id_len, &le, sizeof(le))) ==
                 NULL) {
@@ -374,6 +413,7 @@ static PHP_METHOD(PDO, dbh_constructor) {
             }
         }
 
+        // diver也是持久的?
         dbh->driver = driver;
         options:
         if (options) {
@@ -381,6 +421,7 @@ static PHP_METHOD(PDO, dbh_constructor) {
             zend_ulong long_key;
             zend_string *str_key = NULL;
 
+            // 应用Options
             ZEND_HASH_FOREACH_KEY_VAL(Z_ARRVAL_P(options), long_key, str_key, attr_value)
                     {
                         if (str_key) {
@@ -1374,14 +1415,17 @@ static void pdo_dbh_free_storage(zend_object *std);
 void pdo_dbh_init(void) {
     zend_class_entry ce;
 
+    // 1. 注册PDO类
     INIT_CLASS_ENTRY(ce, "PDO", pdo_dbh_functions);
     pdo_dbh_ce = zend_register_internal_class(&ce);
+    // 定义构造函数
     pdo_dbh_ce->create_object = pdo_dbh_new;
 
+    // 定制handler
     memcpy(&pdo_dbh_object_handlers, &std_object_handlers, sizeof(zend_object_handlers));
     pdo_dbh_object_handlers.offset = XtOffsetOf(pdo_dbh_object_t, std);
     pdo_dbh_object_handlers.dtor_obj = zend_objects_destroy_object;
-    pdo_dbh_object_handlers.free_obj = pdo_dbh_free_storage;
+    pdo_dbh_object_handlers.free_obj = pdo_dbh_free_storage; // 如何释放对象
     pdo_dbh_object_handlers.get_method = dbh_method_get;
     pdo_dbh_object_handlers.compare_objects = dbh_compare;
     pdo_dbh_object_handlers.get_gc = dbh_get_gc;
@@ -1490,15 +1534,22 @@ static void dbh_free(pdo_dbh_t *dbh, zend_bool free_persistent) {
         dbh->query_stmt = NULL;
     }
 
+    // 释放 PDO是如何管理连接呢?
     if (dbh->is_persistent) {
 #if ZEND_DEBUG
 		ZEND_ASSERT(!free_persistent || (dbh->refcount == 1));
 #endif
+        // 如果不释放free_persistent，并且引用计数大于0
+        // 反过来:
+        // 1. 如果free_persistent 或者引用计数 == 0，则立马释放
+        // 问题: refcount 如何管理呢?
+        //
         if (!free_persistent && (--dbh->refcount)) {
             return;
         }
     }
 
+    // 内存释放时关闭:
     if (dbh->methods) {
         dbh->methods->closer(dbh);
     }
@@ -1513,6 +1564,7 @@ static void dbh_free(pdo_dbh_t *dbh, zend_bool free_persistent) {
         pefree(dbh->password, dbh->is_persistent);
     }
 
+    // 释放持久化?
     if (dbh->persistent_id) {
         pefree((char *) dbh->persistent_id, dbh->is_persistent);
     }
@@ -1538,13 +1590,18 @@ static void pdo_dbh_free_storage(zend_object *std) {
         dbh->in_txn = 0;
     }
 
+    // 如果是持久化, 并且定义了持久化shutdown, 则调用xxx
     if (dbh->is_persistent && dbh->methods && dbh->methods->persistent_shutdown) {
+        // MySQL没有定义： persistent_shutdown
         dbh->methods->persistent_shutdown(dbh);
     }
     zend_object_std_dtor(std);
+
+    // 只要持久化连接引用计数大于0，则不释放
     dbh_free(dbh, 0);
 }
 
+// 构造函数只负责创建PDO对象，不负责持久化
 zend_object *pdo_dbh_new(zend_class_entry *ce) {
     pdo_dbh_object_t *dbh;
 
@@ -1560,17 +1617,16 @@ zend_object *pdo_dbh_new(zend_class_entry *ce) {
     return &dbh->std;
 }
 
-/* }}} */
-
-ZEND_RSRC_DTOR_FUNC(php_pdo_pdbh_dtor) /* {{{ */
-{
+ZEND_RSRC_DTOR_FUNC(php_pdo_pdbh_dtor) {
+    // 持久化对象的释放?
+    // res本身呢?
     if (res->ptr) {
+        // 释放持久化对象
         pdo_dbh_t *dbh = (pdo_dbh_t *) res->ptr;
         dbh_free(dbh, 1);
         res->ptr = NULL;
     }
 }
-/* }}} */
 
 /*
  * Local variables:

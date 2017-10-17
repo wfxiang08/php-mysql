@@ -239,7 +239,7 @@ typedef struct {
 /* {{{ methods for a database handle */
 
 /* close or otherwise disconnect the database */
-typedef int (*pdo_dbh_close_func)(pdo_dbh_t *dbh);
+typedef int (*pdo_dbh_close_func)(pdo_dbh_t *dbh); // 如何关闭Connection
 
 /* prepare a statement and stash driver specific portion into stmt */
 typedef int (*pdo_dbh_prepare_func)(pdo_dbh_t *dbh, const char *sql, size_t sql_len, pdo_stmt_t *stmt, zval *driver_options);
@@ -296,7 +296,7 @@ enum {
 typedef const zend_function_entry *(*pdo_dbh_get_driver_methods_func)(pdo_dbh_t *dbh, int kind);
 
 struct pdo_dbh_methods {
-	pdo_dbh_close_func		closer;
+	pdo_dbh_close_func		closer; // 关闭Connection
 	pdo_dbh_prepare_func	preparer;
 	pdo_dbh_do_func			doer;
 	pdo_dbh_quote_func		quoter;
@@ -509,7 +509,7 @@ struct _pdo_dbh_object_t {
        to allow the extending class to escape all the custom handlers
 	   that PDO declares.
     */
-	zend_object std;
+	zend_object std; // 对外可见的php对象
 };
 
 static inline pdo_dbh_t *php_pdo_dbh_fetch_inner(zend_object *obj) {
