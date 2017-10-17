@@ -526,6 +526,7 @@ static struct pdo_dbh_methods mysql_methods = {
 #endif
 
 /* {{{ pdo_mysql_handle_factory */
+// Factory负责对象的创建，不负责对象的复用(复用应该在: pdo中实现的)
 static int pdo_mysql_handle_factory(pdo_dbh_t *dbh, zval *driver_options) {
     pdo_mysql_db_handle *H;
     size_t i;
@@ -751,6 +752,7 @@ static int pdo_mysql_handle_factory(pdo_dbh_t *dbh, zval *driver_options) {
         }
     }
 
+    // C模拟C++类的实现
     dbh->methods = &mysql_methods;
 
     PDO_DBG_RETURN(ret);
@@ -759,7 +761,7 @@ static int pdo_mysql_handle_factory(pdo_dbh_t *dbh, zval *driver_options) {
 /* }}} */
 
 pdo_driver_t pdo_mysql_driver = {
-    PDO_DRIVER_HEADER(mysql),
+    PDO_DRIVER_HEADER(mysql), // 定义驱动程序
     pdo_mysql_handle_factory
 };
 
